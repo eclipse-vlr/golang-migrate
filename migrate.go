@@ -721,7 +721,24 @@ func (m *Migrate) readDown(from int, limit int, ret chan<- interface{}) {
 // to stop execution because it might have received a stop signal on the
 // GracefulStop channel.
 func (m *Migrate) runMigrations(ret <-chan interface{}) error {
+	var current *Migration
+	defer func() {
+		if current != nil {
+			current.cleanup()
+		}
+		// A producer may still be blocked on send after an early return. Drain it
+		// without executing SQL, aborting and joining every remaining buffer.
+		for item := range ret {
+			if migration, ok := item.(*Migration); ok {
+				migration.cleanup()
+			}
+		}
+	}()
 	for r := range ret {
+		if current != nil {
+			current.cleanup()
+		}
+		current, _ = r.(*Migration)
 
 		if m.stop() {
 			return nil

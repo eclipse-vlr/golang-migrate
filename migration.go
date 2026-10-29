@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 )
 
@@ -39,7 +40,10 @@ type Migration struct {
 
 	// bufferWriter holds an io.WriteCloser and pipes to BufferBody.
 	// It's an *Closer for flow control.
-	bufferWriter io.WriteCloser
+	bufferWriter  io.WriteCloser
+	bufferDone    chan struct{}
+	bodyCloseOnce sync.Once
+	bodyCloseErr  error
 
 	// Scheduled is the time when the migration was scheduled/ queued.
 	Scheduled time.Time
@@ -82,6 +86,7 @@ func NewMigration(body io.ReadCloser, identifier string,
 		Version:       version,
 		TargetVersion: targetVersion,
 		Scheduled:     tnow,
+		bufferDone:    make(chan struct{}),
 	}
 
 	if body == nil {
@@ -120,6 +125,9 @@ func (m *Migration) LogString() string {
 // Buffer buffers Body up to BufferSize.
 // Calling this function blocks. Call with goroutine.
 func (m *Migration) Buffer() (berr error) {
+	if m.bufferDone != nil {
+		defer close(m.bufferDone)
+	}
 	if m.Body == nil {
 		return nil
 	}
@@ -137,7 +145,7 @@ func (m *Migration) Buffer() (berr error) {
 		}
 
 		// it's safe to close the Body too.
-		if err := m.Body.Close(); err != nil {
+		if err := m.closeBody(); err != nil {
 			berr = errors.Join(berr, err)
 		}
 
@@ -162,4 +170,25 @@ func (m *Migration) Buffer() (berr error) {
 	m.BytesRead = n
 
 	return nil
+}
+
+func (m *Migration) closeBody() error {
+	m.bodyCloseOnce.Do(func() {
+		if m.Body != nil {
+			m.bodyCloseErr = m.Body.Close()
+		}
+	})
+	return m.bodyCloseErr
+}
+
+// cleanup is called only after a producer has sent this migration, so Buffer
+// will run even if the consumer stops before the buffering goroutine starts.
+func (m *Migration) cleanup() {
+	if reader, ok := m.BufferedBody.(io.Closer); ok {
+		_ = reader.Close()
+	}
+	_ = m.closeBody()
+	if m.bufferDone != nil {
+		<-m.bufferDone
+	}
 }
