@@ -1,0 +1,24 @@
+name: Migration resource cleanup
+
+on:
+  push:
+    branches: [fix/migration-resource-cleanup]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.3
+          cache: true
+      - name: Test migration and file resource ownership
+        run: go test -race -count=1 -timeout=120s . ./database/stub ./source/stub ./source/file
+      - name: Vet changed packages
+        run: go vet . ./database/stub ./source/stub ./source/file
