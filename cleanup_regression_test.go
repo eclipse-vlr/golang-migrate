@@ -75,8 +75,18 @@ type failingDatabase struct {
 	runCalls int
 }
 
+const modeDirtyVersion = "dirty_version"
+
+func closeTestMigrator(t *testing.T, m *Migrate) {
+	t.Helper()
+	sourceErr, databaseErr := m.Close()
+	if sourceErr != nil || databaseErr != nil {
+		t.Errorf("close test migrator: source=%v database=%v", sourceErr, databaseErr)
+	}
+}
+
 func (d *failingDatabase) SetVersion(version int, dirty bool) error {
-	if (d.mode == "dirty_version" && dirty) || (d.mode == "clean_version" && !dirty) {
+	if (d.mode == modeDirtyVersion && dirty) || (d.mode == "clean_version" && !dirty) {
 		return d.failure
 	}
 	return d.Stub.SetVersion(version, dirty)
@@ -100,7 +110,7 @@ func (d *failingDatabase) Run(body io.Reader) error {
 func TestMigrationFailureClosesPrefetchedBodies(t *testing.T) {
 	const count = 24 // Exceed the prefetch queue and force producer backpressure.
 	for _, operation := range []string{"up", "down", "steps", "migrate", "run"} {
-		for _, mode := range []string{"dirty_version", "before_read", "partial_read", "clean_version"} {
+		for _, mode := range []string{modeDirtyVersion, "before_read", "partial_read", "clean_version"} {
 			t.Run(operation+"/"+mode, func(t *testing.T) {
 				migrations := source.NewMigrations()
 				for version := uint(1); version <= count; version++ {
@@ -116,7 +126,7 @@ func TestMigrationFailureClosesPrefetchedBodies(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer m.Close()
+				defer closeTestMigrator(t, m)
 				switch operation {
 				case "up":
 					err = m.Up()
@@ -143,13 +153,13 @@ func TestMigrationFailureClosesPrefetchedBodies(t *testing.T) {
 				}
 				src.verifyClosed(t)
 				wantRuns := 1
-				if mode == "dirty_version" {
+				if mode == modeDirtyVersion {
 					wantRuns = 0
 				}
 				if db.runCalls != wantRuns {
 					t.Fatalf("SQL executions = %d, want %d; prefetched SQL must not execute", db.runCalls, wantRuns)
 				}
-				if mode != "dirty_version" && !db.IsDirty {
+				if mode != modeDirtyVersion && !db.IsDirty {
 					t.Fatal("failed migration lost its dirty flag")
 				}
 			})
@@ -159,14 +169,18 @@ func TestMigrationFailureClosesPrefetchedBodies(t *testing.T) {
 
 func TestMigrationFailureClosesSourceBlockedOnRead(t *testing.T) {
 	reader, writer := io.Pipe()
-	defer writer.Close()
+	defer func() {
+		if err := writer.Close(); err != nil {
+			t.Errorf("close blocked source writer: %v", err)
+		}
+	}()
 	body := &trackedBody{ReadCloser: reader}
-	db := &failingDatabase{Stub: &dStub.Stub{CurrentVersion: database.NilVersion}, mode: "dirty_version", failure: errors.New("expected version failure")}
+	db := &failingDatabase{Stub: &dStub.Stub{CurrentVersion: database.NilVersion}, mode: modeDirtyVersion, failure: errors.New("expected version failure")}
 	m, err := NewWithInstance("stub", &sStub.Stub{}, "stub", db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer m.Close()
+	defer closeTestMigrator(t, m)
 	migration, err := NewMigration(body, "blocked", 1, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +206,10 @@ func TestMigrationStopClosesReceivedAndQueuedBodies(t *testing.T) {
 			t.Fatal(err)
 		}
 		ret <- migration
-		go migration.Buffer()
+		go func() {
+			// Closing the reader intentionally aborts buffering; cleanup joins it.
+			_ = migration.Buffer()
+		}()
 	}
 	close(ret)
 	if err := m.runMigrations(ret); err != nil {
