@@ -9,7 +9,7 @@
 
 # migrate
 
-Это форк [golang-migrate/migrate](https://github.com/golang-migrate/migrate) для LinkForge. Он исправляет освобождение ресурсов миграций при досрочном завершении; новые возможности миграций не добавлены. LinkForge закрепляет [коммит `220f6d3`](https://github.com/eclipse-vlr/golang-migrate/commit/220f6d3de288670889195623ea10cd363173891d) через `replace` в `go.mod`. Подробности и границы проверки: [LINKFORGE_FORK.md](LINKFORGE_FORK.md), [регрессионные тесты](cleanup_regression_test.go).
+Это форк [golang-migrate/migrate](https://github.com/golang-migrate/migrate) для LinkForge. Он исправляет освобождение ресурсов миграций при досрочном завершении; новые возможности миграций не добавлены. LinkForge закрепляет [коммит `d2d19ce`](https://github.com/eclipse-vlr/golang-migrate/commit/d2d19ce033f7c829d4ad767c18983af16defe3d0) через `replace` в `go.mod`. Подробности и границы проверки: [LINKFORGE_FORK.md](LINKFORGE_FORK.md), [регрессионные тесты](cleanup_regression_test.go).
 
 Ниже сохранена документация исходного проекта. Его значки CI, релизы, Docker-образ и инструкции установки относятся к upstream; они не подтверждают сборку и поддержку всех драйверов в этом форке.
 
